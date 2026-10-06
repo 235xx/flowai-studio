@@ -1,0 +1,124 @@
+import axios from 'axios'
+
+// 创建axios实例
+const request = axios.create({
+  baseURL: '/api', // 基础URL，与Vite配置对应
+  timeout: 15000, // 请求超时时间
+  headers: {
+    'Content-Type': 'application/json',
+  },
+})
+
+// 请求拦截器
+request.interceptors.request.use(
+  (config) => {
+    // 从localStorage获取token
+    const token = localStorage.getItem('token')
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    
+    // 注意：这里曾经给每个 GET 追加 `_t: Date.now()` 防缓存，
+    // 但后端全局 ValidationPipe 开了 forbidNonWhitelisted，
+    // 任何 DTO 未声明的查询参数都会被 400 拒绝，
+    // 导致所有用 @Query() DTO 的接口从前端一律调不通。
+    // API 响应本身不会被浏览器缓存，这个时间戳没有必要。
+
+    return config
+  },
+  (error) => {
+    return Promise.reject(error)
+  }
+)
+
+// 响应拦截器
+request.interceptors.response.use(
+  (response) => {
+    // 只返回data部分
+    return response.data
+  },
+  (error) => {
+    // 处理错误响应
+    if (error.response) {
+      // 服务器返回错误状态码
+      const { status, data } = error.response
+      
+      switch (status) {
+        case 400:
+          // 请求参数错误
+          error.message = data.message || '请求参数错误'
+          break
+        
+        case 401:
+          // 未授权，清除token并跳转到登录页
+          localStorage.removeItem('token')
+          localStorage.removeItem('user')
+          
+          // 如果不是登录页面，跳转到登录页
+          if (!window.location.pathname.includes('/login')) {
+            window.location.href = '/login'
+          }
+          error.message = data.message || '登录已过期，请重新登录'
+          break
+        
+        case 403:
+          // 禁止访问
+          error.message = data.message || '没有权限访问该资源'
+          break
+        
+        case 404:
+          // 资源不存在
+          error.message = data.message || '请求的资源不存在'
+          break
+        
+        case 409:
+          // 资源冲突
+          error.message = data.message || '资源已存在'
+          break
+        
+        case 429:
+          // 请求过于频繁
+          error.message = data.message || '请求过于频繁，请稍后重试'
+          break
+        
+        case 500:
+          // 服务器内部错误
+          error.message = data.message || '服务器内部错误，请稍后重试'
+          break
+        
+        case 502:
+          // 网关错误
+          error.message = '网关错误，请稍后重试'
+          break
+        
+        case 503:
+          // 服务不可用
+          error.message = '服务暂时不可用，请稍后重试'
+          break
+        
+        default:
+          // 其他错误
+          error.message = data.message || `请求失败 (${status})`
+      }
+    } else if (error.request) {
+      // 请求已发出但没有收到响应
+      if (error.code === 'ECONNABORTED') {
+        error.message = '请求超时，请检查网络连接'
+      } else {
+        error.message = '网络错误，请检查网络连接'
+      }
+    } else {
+      // 请求配置出错
+      error.message = `请求错误: ${error.message}`
+    }
+    
+    // 统一错误格式
+    error.response = error.response || {}
+    error.response.data = error.response.data || {}
+    error.response.data.message = error.message
+    
+    return Promise.reject(error)
+  }
+)
+
+export default request
